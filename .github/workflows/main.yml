@@ -40,10 +40,17 @@ jobs:
           p12-file-base64: ${{ secrets.CODESIGN_CERT_BASE64 }}
           p12-password: ${{ secrets.CODESIGN_CERT_PASSWORD }}
 
+      - name: Trust signing certificate
+        run: |
+          echo "${{ secrets.CODESIGN_CERT_PEM_BASE64 }}" | base64 -d > /tmp/ci-cert.pem
+          sudo security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain /tmp/ci-cert.pem
+          rm /tmp/ci-cert.pem
+
       - name: Build
         run: |
+          BUILT_PRODUCTS_DIR=$(xcodebuild -project TomatoBar.xcodeproj -scheme TomatoBar -configuration Release -showBuildSettings | awk '/^ *BUILT_PRODUCTS_DIR = / {print $3}')
           xcodebuild build -project TomatoBar.xcodeproj -scheme TomatoBar -configuration Release MARKETING_VERSION=${{github.ref_name}} CODE_SIGN_IDENTITY="CI Code Signing" CODE_SIGN_STYLE=Manual
-          cp -r "$(xcodebuild -project TomatoBar.xcodeproj -scheme TomatoBar -configuration Release -showBuildSettings | awk '/\bBUILT_PRODUCTS_DIR\b/ {print $3}')/TomatoBar.app" .
+          cp -r "$BUILT_PRODUCTS_DIR/TomatoBar.app" .
           zip -r "TomatoBar-${{env.version}}.zip" "TomatoBar.app"
 
       - name: Release
