@@ -18,11 +18,13 @@ class TBLogEventTransition: TBLogEvent {
     private let event: String
     private let fromState: String
     private let toState: String
+    private let project: String
 
-    init(fromContext ctx: TBStateMachine.Context) {
+    init(fromContext ctx: TBStateMachine.Context, project: String) {
         event = "\(ctx.event!)"
         fromState = "\(ctx.fromState)"
         toState = "\(ctx.toState)"
+        self.project = project
     }
 }
 
@@ -33,6 +35,7 @@ internal let logger = TBLogger()
 
 class TBLogger {
     private let logHandle: FileHandle?
+    private let logURL: URL?
     private let encoder = JSONEncoder()
 
     init() {
@@ -40,11 +43,12 @@ class TBLogger {
         encoder.dateEncodingStrategy = .secondsSince1970
 
         let fileManager = FileManager.default
-        let logPath = fileManager
+        let resolvedLogURL = fileManager
             .urls(for: .cachesDirectory, in: .userDomainMask)
             .first!
             .appendingPathComponent(logFileName)
-            .path
+        logURL = resolvedLogURL
+        let logPath = resolvedLogURL.path
 
         if !fileManager.fileExists(atPath: logPath) {
             guard fileManager.createFile(atPath: logPath, contents: nil) else {
@@ -72,6 +76,53 @@ class TBLogger {
             try logHandle.synchronize()
         } catch {
             print("cannot write to log file: \(error)")
+        }
+    }
+
+    func removeEvents(forProject rawProject: String) {
+        guard let logHandle = logHandle,
+              let logURL = logURL else {
+            return
+        }
+
+        let project = rawProject.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !project.isEmpty else {
+            return
+        }
+
+        do {
+            let data = try Data(contentsOf: logURL)
+            guard let text = String(data: data, encoding: .utf8) else {
+                return
+            }
+
+            var keptLines: [String] = []
+            for rawLine in text.split(whereSeparator: \.isNewline) {
+                let line = String(rawLine)
+                guard let lineData = line.data(using: .utf8),
+                      let payload = try? JSONSerialization.jsonObject(with: lineData) as? [String: Any],
+                      let loggedProject = (payload["project"] as? String)?
+                          .trimmingCharacters(in: .whitespacesAndNewlines),
+                      !loggedProject.isEmpty else {
+                    keptLines.append(line)
+                    continue
+                }
+
+                if loggedProject.caseInsensitiveCompare(project) == .orderedSame {
+                    continue
+                }
+
+                keptLines.append(line)
+            }
+
+            let outputText = keptLines.isEmpty ? "" : keptLines.joined(separator: "\n") + "\n"
+            let outputData = outputText.data(using: .utf8) ?? Data()
+            try logHandle.truncate(atOffset: 0)
+            try logHandle.seek(toOffset: 0)
+            try logHandle.write(contentsOf: outputData)
+            try logHandle.synchronize()
+        } catch {
+            print("cannot filter log file: \(error)")
         }
     }
 }
